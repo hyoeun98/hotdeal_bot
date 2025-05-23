@@ -14,8 +14,8 @@
 *   **데이터 중복 방지**: PostgreSQL 데이터베이스를 활용하여 이미 처리된 게시글 링크를 필터링하고, 새로운 정보만 처리합니다.
 *   **클라우드 기반 아키텍처**:
     *   AWS Lambda: 스캐닝 및 크롤링 로직을 서버리스 함수로 실행합니다.
-    *   AWS SNS (Simple Notification Service): 스캔된 새로운 핫딜 링크를 게시(publish)합니다.
-    *   AWS SQS (Simple Queue Service): SNS 토픽으로부터 메시지를 수신하여 크롤러 Lambda 함수로 전달합니다.
+    *   AWS SNS (Simple Notification Service): 스캐너 Lambda 함수가 발견한 새로운 핫딜 링크를 게시(publish)하며, 이 메시지는 크롤러 Lambda 함수의 직접적인 트리거가 됩니다.
+    *   AWS SQS (Simple Queue Service): 크롤러 Lambda 함수가 처리한 상세 정보를 수신하여 후속 처리를 위해 보관합니다.
 *   **오류 알림 및 로깅**:
     *   오류 발생 시 Discord 웹훅을 통해 스크린샷과 페이지 HTML 소스를 포함한 알림을 전송합니다.
     *   (암시적으로) AWS CloudWatch를 통해 Lambda 함수의 로그가 기록됩니다.
@@ -30,7 +30,7 @@
 *   **봇 탐지 우회**: `selenium-stealth`, `stealthenium`
 *   **클라우드 플랫폼**: AWS
     *   **컴퓨팅**: AWS Lambda
-    *   **메시징**: AWS SNS, AWS SQS
+    *   **메시징**: AWS SNS (스캐너 -> 크롤러), AWS SQS (크롤러 -> 후속 처리)
     *   **데이터베이스**: PostgreSQL (AWS RDS 또는 Lightsail 등에서 호스팅 가능)
     *   **(암시적)**: IAM (권한 관리), CloudWatch (로깅)
 *   **컨테이너화**: Docker
@@ -47,10 +47,9 @@
     *   오류 발생 시 (예: 웹사이트 구조 변경으로 인한 스크래핑 실패), Discord를 통해 스크린샷과 함께 알림을 보냅니다.
 
 2.  **`lambda-selenium-docker-crawler` (핫딜 크롤러)**:
-    *   `lambda-selenium-docker-scanner`가 발행한 메시지를 수신하기 위해 AWS SQS 큐를 통해 AWS SNS 토픽을 구독합니다.
-    *   새로운 게시글 URL을 SQS 큐로부터 수신하면, 해당 URL의 웹 페이지에 접속합니다.
-    *   Selenium을 사용하여 페이지 내의 상세 정보(상품명, 가격, 쇼핑몰 정보, 본문 내용 등)를 추출합니다.
-    *   추출된 상세 정보는 JSON 형태로 구성되어, 추가 처리를 위해 다른 AWS SQS 큐로 전송됩니다. (이후 단계는 현재 코드베이스에서는 명시적으로 나타나지 않으나, 일반적으로 Discord 봇 등으로 전달될 수 있습니다.)
+    *   `lambda-selenium-docker-scanner`에 의해 SNS 토픽으로 발행된 새로운 핫딜 링크 메시지를 **직접 이벤트 트리거로 수신**하여 실행됩니다. (즉, SNS 토픽이 이 Lambda 함수의 직접적인 이벤트 소스입니다.)
+    *   전달받은 URL의 웹 페이지에 접속하여 Selenium을 사용해 상세 정보(상품명, 가격, 쇼핑몰 정보, 본문 내용 등)를 추출합니다.
+    *   추출된 상세 정보는 JSON 형태로 구성되어, 추가적인 처리(예: 데이터베이스 저장, 알림 발송 등)를 위해 **별도의 AWS SQS 큐로 발행(publish)**합니다.
 
 두 Lambda 함수 모두 Docker 컨테이너 이미지로 패키징되어 AWS Lambda 환경에 배포됩니다. 각 Dockerfile은 Chrome 웹 브라우저, ChromeDriver 및 필요한 Python 라이브러리 등 실행 환경을 정의합니다.
 
